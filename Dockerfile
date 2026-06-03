@@ -1,25 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# Stage 1 — собираем frontend-ассеты (Vite + Vue) через Node
-# ---------------------------------------------------------------------------
-FROM node:22-alpine AS frontend
-
-WORKDIR /app
-
-# Сначала только манифесты — чтобы кешировать слой npm ci
-COPY package.json package-lock.json ./
-RUN npm ci
-
-# Исходники, нужные Vite для сборки
-COPY vite.config.js postcss.config.js tailwind.config.js jsconfig.json ./
-COPY resources ./resources
-COPY public ./public
-
-RUN npm run build
-
-# ---------------------------------------------------------------------------
-# Stage 2 — PHP-зависимости через Composer
+# Stage 1 — PHP-зависимости через Composer
+# (идёт первой, т.к. её vendor нужен фронтенду — оттуда импортируется Ziggy)
 # ---------------------------------------------------------------------------
 FROM composer:2 AS vendor
 
@@ -35,6 +18,27 @@ RUN composer install \
         --no-interaction \
         --prefer-dist \
         --optimize-autoloader
+
+# ---------------------------------------------------------------------------
+# Stage 2 — собираем frontend-ассеты (Vite + Vue) через Node
+# ---------------------------------------------------------------------------
+FROM node:22-alpine AS frontend
+
+WORKDIR /app
+
+# Сначала только манифесты — чтобы кешировать слой npm ci
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Исходники, нужные Vite для сборки
+COPY vite.config.js postcss.config.js tailwind.config.js jsconfig.json ./
+COPY resources ./resources
+COPY public ./public
+
+# Ziggy импортируется как '../../vendor/tightenco/ziggy' — кладём vendor рядом
+COPY --from=vendor /app/vendor ./vendor
+
+RUN npm run build
 
 # ---------------------------------------------------------------------------
 # Stage 3 — финальный образ: PHP-FPM + Nginx под управлением supervisord
