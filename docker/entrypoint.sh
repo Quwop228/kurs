@@ -34,6 +34,20 @@ php artisan storage:link 2>/dev/null || true
 echo "[entrypoint] Запускаю миграции"
 php artisan migrate --force || true
 
+# Первичное наполнение БД (категории, теги, статьи) из DatabaseSeeder.
+# Выполняется один раз — маркер лежит в томе database, поэтому при
+# перезапусках контейнера сид повторно не запускается.
+SEED_MARKER="/var/www/html/database/.seeded"
+if [ ! -f "$SEED_MARKER" ]; then
+    echo "[entrypoint] Первый запуск — наполняю БД (db:seed)"
+    if php artisan db:seed --force; then
+        touch "$SEED_MARKER"
+        echo "[entrypoint] Сид выполнен"
+    else
+        echo "[entrypoint] ВНИМАНИЕ: db:seed завершился с ошибкой"
+    fi
+fi
+
 # Кешируем конфиг/роуты/вью для прода
 echo "[entrypoint] Кеширую конфиг приложения"
 php artisan config:cache
