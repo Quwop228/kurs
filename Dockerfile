@@ -87,7 +87,17 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
         /var/www/html/database \
     && chmod -R 775 \
         /var/www/html/storage \
-        /var/www/html/bootstrap/cache
+        /var/www/html/bootstrap/cache \
+    # Воркеры nginx работают под www-data — отдаём им temp/лог-каталоги,
+    # иначе буферизация тела запроса падает с "Permission denied"
+    && mkdir -p \
+        /var/lib/nginx/tmp/client_body \
+        /var/lib/nginx/tmp/proxy \
+        /var/lib/nginx/tmp/fastcgi \
+        /var/lib/nginx/tmp/uwsgi \
+        /var/lib/nginx/tmp/scgi \
+        /var/log/nginx \
+    && chown -R www-data:www-data /var/lib/nginx /var/log/nginx
 
 EXPOSE 80
 
