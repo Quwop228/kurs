@@ -1,0 +1,49 @@
+# Зависимости — ставятся внутри образа
+/node_modules
+/vendor
+
+# Собранные ассеты — пересобираются в стадии frontend
+/public/build
+/public/hot
+/public/storage
+
+# Окружение и секреты
+.env
+.env.backup
+.env.production
+
+# Storage (логи, кеш, сессии) — наполняется в рантайме
+/storage/*.key
+/storage/logs/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+/storage/pail
+
+# Git и IDE
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+.fleet
+.zed
+.nova
+
+# Кеши тестов и линтеров
+/.phpunit.cache
+.phpunit.result.cache
+.phpactor.json
+
+# Файлы Claude / служебное
+.claude
+
+# Артефакты курсовой, не нужные в образе
+*.docx
+*.zip
+*.md
+*.py
+*.cjs
+*.bat
+*.ps1
+Новый текстовый документ.txt
