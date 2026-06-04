@@ -28,6 +28,13 @@ Route::get('/categories/{category:slug}', [CategoryController::class, 'show'])->
 Route::get('/tags/{tag:slug}', [TagController::class, 'show'])->name('tags.show');
 Route::get('/search', [SearchController::class, 'index'])->name('search');
 
+// Генерация интерактивного объяснения доступна всем читателям (в т.ч. гостям).
+Route::post('/articles/{article:slug}/interactive', [InteractiveExplanationController::class, 'generate'])->name('interactive.generate');
+// Пересоздание — только для админов (URL и имя роута сохранены).
+Route::post('/articles/{article:slug}/interactive/regenerate', [InteractiveExplanationController::class, 'regenerate'])
+    ->middleware(['auth', 'role:admin'])
+    ->name('interactive.regenerate');
+
 Route::get('/dashboard', function () {
     return Inertia\Inertia::render('Dashboard');
 })->middleware('auth')->name('dashboard');
@@ -39,8 +46,6 @@ Route::middleware('auth')->group(function () {
     Route::post('/articles/{article:slug}/favorite', [FavoriteController::class, 'toggle'])->name('favorites.toggle');
     Route::get('/favorites', [FavoriteController::class, 'index'])->name('favorites.index');
     Route::post('/articles/{article:slug}/daily-update', [DailyUpdateController::class, 'generate'])->name('daily-update.generate');
-    Route::post('/articles/{article:slug}/interactive', [InteractiveExplanationController::class, 'generate'])->name('interactive.generate');
-    Route::post('/articles/{article:slug}/interactive/regenerate', [InteractiveExplanationController::class, 'regenerate'])->name('interactive.regenerate');
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
@@ -50,6 +55,7 @@ Route::middleware('auth')->group(function () {
 Route::middleware(['auth', 'role:admin,editor'])->prefix('admin')->name('admin.')->group(function () {
     Route::resource('articles', AdminArticleController::class);
     Route::post('/wikipedia-import', [WikipediaImportController::class, 'import'])->name('wikipedia.import');
+    Route::get('/wikipedia-import/{importId}/status', [WikipediaImportController::class, 'status'])->name('wikipedia.import.status');
 });
 
 Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
