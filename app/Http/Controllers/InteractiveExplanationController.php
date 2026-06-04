@@ -25,7 +25,14 @@ class InteractiveExplanationController extends Controller
             ]);
         }
 
-        $result = $aiService->generateInteractiveExplanation($article);
+        try {
+            $result = $aiService->generateInteractiveExplanation($article);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Не удалось сгенерировать объяснение через AI: ' . $e->getMessage()
+                    . ' Проверьте настройки OpenRouter (ключ и модель).',
+            ], 502);
+        }
 
         $explanation = InteractiveExplanation::create([
             'article_id' => $article->id,
@@ -47,9 +54,16 @@ class InteractiveExplanationController extends Controller
     {
         @set_time_limit(0);
 
-        InteractiveExplanation::where('article_id', $article->id)->delete();
+        try {
+            $result = $aiService->generateInteractiveExplanation($article);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Не удалось сгенерировать объяснение через AI: ' . $e->getMessage()
+                    . ' Проверьте настройки OpenRouter (ключ и модель).',
+            ], 502);
+        }
 
-        $result = $aiService->generateInteractiveExplanation($article);
+        InteractiveExplanation::where('article_id', $article->id)->delete();
 
         $explanation = InteractiveExplanation::create([
             'article_id' => $article->id,
