@@ -8,6 +8,7 @@ use App\Services\WikipediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class WikipediaImportController extends Controller
@@ -32,13 +33,23 @@ class WikipediaImportController extends Controller
 
         $importId = (string) Str::uuid();
 
-        Cache::put(
-            ImportWikipediaArticle::cacheKey($importId),
-            ['status' => 'processing'],
-            ImportWikipediaArticle::TTL,
-        );
+        try {
+            Cache::put(
+                ImportWikipediaArticle::cacheKey($importId),
+                ['status' => 'processing'],
+                ImportWikipediaArticle::TTL,
+            );
 
-        ImportWikipediaArticle::dispatch($importId, $parsed['lang'], $parsed['title']);
+            ImportWikipediaArticle::dispatch($importId, $parsed['lang'], $parsed['title']);
+        } catch (\Throwable $e) {
+            Log::error('Не удалось поставить задачу импорта: ' . $e->getMessage(), [
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'error' => 'Не удалось запустить импорт: ' . $e->getMessage(),
+            ], 500);
+        }
 
         return response()->json([
             'import_id' => $importId,
