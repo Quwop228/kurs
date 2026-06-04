@@ -15,6 +15,26 @@ class AIService
      *
      * @param array<int, array{role: string, content: string}> $messages
      */
+    /**
+     * Условие повтора запроса к OpenRouter: повторяем только временные сбои
+     * (обрыв связи, 429 rate-limit, 5xx — частая ситуация у :free-моделей при "холодном старте").
+     * На 400/401/403 НЕ повторяем — это не временные ошибки.
+     */
+    private function retryWhen(): \Closure
+    {
+        return function ($exception) {
+            if ($exception instanceof \Illuminate\Http\Client\ConnectionException) {
+                return true;
+            }
+
+            $status = $exception instanceof \Illuminate\Http\Client\RequestException
+                ? $exception->response->status()
+                : null;
+
+            return $status === 429 || ($status !== null && $status >= 500);
+        };
+    }
+
     private function chat(array $messages, int $timeout = 120): string
     {
         $apiKey = config('openrouter.api_key');
@@ -23,39 +43,52 @@ class AIService
             throw new \RuntimeException('OPENROUTER_API_KEY не задан. Укажите ключ в .env / переменных окружения.');
         }
 
-        $response = Http::timeout($timeout)->withHeaders([
-            'Authorization' => 'Bearer ' . $apiKey,
-            'Content-Type' => 'application/json',
-        ])->post(config('openrouter.base_url') . '/chat/completions', [
-            'model' => config('openrouter.model'),
-            'messages' => $messages,
-        ]);
+        $lastError = 'OpenRouter вернул пустой ответ.';
 
-        if ($response->failed()) {
-            $body = $response->json();
-            $apiMessage = $body['error']['message'] ?? $response->body();
+        // До 3 попыток — гасит "холодный старт" :free-моделей (первый раз пусто/ошибка, потом ок).
+        // Http::retry ловит 429/5xx/обрыв; внешний цикл дополнительно повторяет на пустом 200-ответе.
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $response = Http::retry(2, 1500, $this->retryWhen(), throw: false)
+                ->timeout($timeout)->withHeaders([
+                    'Authorization' => 'Bearer ' . $apiKey,
+                    'Content-Type' => 'application/json',
+                ])->post(config('openrouter.base_url') . '/chat/completions', [
+                    'model' => config('openrouter.model'),
+                    'messages' => $messages,
+                ]);
 
-            Log::error('OpenRouter API error', [
-                'status' => $response->status(),
+            if ($response->failed()) {
+                $body = $response->json();
+                $apiMessage = $body['error']['message'] ?? $response->body();
+
+                Log::error('OpenRouter API error', [
+                    'status' => $response->status(),
+                    'model' => config('openrouter.model'),
+                    'error' => $apiMessage,
+                ]);
+
+                // На 401/400/403 повторять бессмысленно — выходим сразу.
+                if (in_array($response->status(), [400, 401, 403], true)) {
+                    throw new \RuntimeException("Ошибка OpenRouter ({$response->status()}): {$apiMessage}");
+                }
+
+                $lastError = "Ошибка OpenRouter ({$response->status()}): {$apiMessage}";
+                continue;
+            }
+
+            $content = $response->json('choices.0.message.content');
+
+            if (is_string($content) && trim($content) !== '') {
+                return $content;
+            }
+
+            Log::warning('OpenRouter вернул пустой ответ, попытка ' . $attempt, [
                 'model' => config('openrouter.model'),
-                'error' => $apiMessage,
             ]);
-
-            throw new \RuntimeException("Ошибка OpenRouter ({$response->status()}): {$apiMessage}");
+            $lastError = 'OpenRouter вернул пустой ответ.';
         }
 
-        $content = $response->json('choices.0.message.content');
-
-        if (!is_string($content) || trim($content) === '') {
-            Log::error('OpenRouter вернул пустой ответ', [
-                'model' => config('openrouter.model'),
-                'body' => $response->json(),
-            ]);
-
-            throw new \RuntimeException('OpenRouter вернул пустой ответ.');
-        }
-
-        return $content;
+        throw new \RuntimeException($lastError);
     }
 
     public function generateDailyUpdate(Article $article): array
@@ -244,10 +277,13 @@ class AIService
         $baseUrl = config('openrouter.base_url');
         $model = config('openrouter.model');
 
-        $responses = Http::pool(function ($pool) use ($chunks, $apiKey, $baseUrl, $model, $systemPrompt) {
+        $retryWhen = $this->retryWhen();
+
+        $responses = Http::pool(function ($pool) use ($chunks, $apiKey, $baseUrl, $model, $systemPrompt, $retryWhen) {
             $requests = [];
             foreach ($chunks as $i => $chunk) {
                 $requests[] = $pool->as("chunk_{$i}")
+                    ->retry(3, 1500, $retryWhen, throw: false)
                     ->timeout(180)
                     ->withHeaders([
                         'Authorization' => 'Bearer ' . $apiKey,
