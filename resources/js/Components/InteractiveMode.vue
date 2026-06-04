@@ -6,6 +6,7 @@ const props = defineProps({
     articleSlug: { type: String, required: true },
     articleId: { type: Number, required: true },
     explanation: { type: Object, default: null },
+    isAdmin: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['close'])
@@ -37,7 +38,8 @@ async function fetchExplanation(regenerate = false) {
             clearProgress()
         }
     } catch (e) {
-        error.value = 'Не удалось сгенерировать объяснение. Попробуйте позже.'
+        error.value = e.response?.data?.error
+            || 'Не удалось сгенерировать объяснение. Попробуйте позже.'
     } finally {
         loading.value = false
     }
@@ -114,7 +116,7 @@ onMounted(() => {
                     <span class="font-bold tracking-wider">ai_explain.sh</span>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button v-if="data && !loading" @click="fetchExplanation(true)"
+                    <button v-if="isAdmin && data && !loading" @click="fetchExplanation(true)"
                         class="hover:text-brand-100 underline-offset-2 hover:underline" title="Сгенерировать заново">
                         [regen]
                     </button>
