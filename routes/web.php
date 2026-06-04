@@ -30,6 +30,7 @@ Route::get('/search', [SearchController::class, 'index'])->name('search');
 
 // Генерация интерактивного объяснения доступна всем читателям (в т.ч. гостям).
 Route::post('/articles/{article:slug}/interactive', [InteractiveExplanationController::class, 'generate'])->name('interactive.generate');
+Route::get('/articles/{article:slug}/interactive/status', [InteractiveExplanationController::class, 'status'])->name('interactive.status');
 // Пересоздание — только для админов (URL и имя роута сохранены).
 Route::post('/articles/{article:slug}/interactive/regenerate', [InteractiveExplanationController::class, 'regenerate'])
     ->middleware(['auth', 'role:admin'])
