@@ -3,18 +3,21 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Services\AIService;
+use App\Jobs\ImportWikipediaArticle;
 use App\Services\WikipediaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 class WikipediaImportController extends Controller
 {
-    public function import(Request $request, WikipediaService $wikipedia, AIService $ai): JsonResponse
+    /**
+     * Старт импорта. Ничего долгого здесь НЕ делаем — только валидируем ссылку
+     * и ставим задачу в очередь, чтобы не упереться в таймаут прокси/браузера.
+     */
+    public function import(Request $request, WikipediaService $wikipedia): JsonResponse
     {
-        @set_time_limit(0);
-        @ini_set('memory_limit', '512M');
-
         $request->validate([
             'url' => 'required|url',
         ]);
@@ -22,38 +25,42 @@ class WikipediaImportController extends Controller
         $parsed = $wikipedia->parseUrl($request->input('url'));
 
         if (!$parsed) {
-            return response()->json(['error' => 'Неверная ссылка. Поддерживаются ссылки вида https://ru.wikipedia.org/wiki/...'], 422);
+            return response()->json([
+                'error' => 'Неверная ссылка. Поддерживаются ссылки вида https://ru.wikipedia.org/wiki/...',
+            ], 422);
         }
 
-        $article = $wikipedia->fetch($parsed['lang'], $parsed['title']);
+        $importId = (string) Str::uuid();
 
-        if (!$article) {
-            return response()->json(['error' => 'Не удалось загрузить статью из Википедии. Проверьте ссылку.'], 422);
-        }
+        Cache::put(
+            ImportWikipediaArticle::cacheKey($importId),
+            ['status' => 'processing'],
+            ImportWikipediaArticle::TTL,
+        );
 
-        $needsTranslation = $parsed['lang'] !== 'ru';
-
-        if ($needsTranslation) {
-            try {
-                $translated = $ai->translateToRussian($article['title'], $article['content']);
-            } catch (\Throwable $e) {
-                return response()->json([
-                    'error' => 'Не удалось перевести статью через AI: ' . $e->getMessage()
-                        . ' Проверьте настройки OpenRouter (ключ и модель).',
-                ], 502);
-            }
-
-            $article['title'] = $translated['title'];
-            $article['content'] = $translated['content'];
-            $article['excerpt'] = mb_substr(strip_tags($translated['content']), 0, 300);
-        }
+        ImportWikipediaArticle::dispatch($importId, $parsed['lang'], $parsed['title']);
 
         return response()->json([
-            'title' => $article['title'],
-            'content' => $article['content'],
-            'excerpt' => $article['excerpt'],
-            'translated' => $needsTranslation,
-            'source_lang' => $parsed['lang'],
-        ]);
+            'import_id' => $importId,
+            'status' => 'processing',
+            'needs_translation' => $parsed['lang'] !== 'ru',
+        ], 202);
+    }
+
+    /**
+     * Опрос статуса импорта. Фронтенд дёргает этот эндпоинт, пока не получит done/failed.
+     */
+    public function status(string $importId): JsonResponse
+    {
+        $data = Cache::get(ImportWikipediaArticle::cacheKey($importId));
+
+        if (!$data) {
+            return response()->json([
+                'status' => 'failed',
+                'error' => 'Задача импорта не найдена или истекла. Попробуйте снова.',
+            ], 404);
+        }
+
+        return response()->json($data);
     }
 }
