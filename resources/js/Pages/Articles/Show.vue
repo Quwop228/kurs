@@ -24,6 +24,7 @@ const props = defineProps({
 
 const page = usePage();
 const user = page.props.auth?.user;
+const isAdmin = computed(() => user?.role === 'admin');
 
 const interactiveMode = ref(false);
 
@@ -143,6 +144,7 @@ const submitRating = (value) => {
                     :article-slug="article.slug"
                     :article-id="article.id"
                     :explanation="interactiveExplanation"
+                    :is-admin="isAdmin"
                     @close="interactiveMode = false"
                 />
             </div>
