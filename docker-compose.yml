@@ -11,8 +11,12 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      # Фиксированный ключ — чтобы сессии (и шифрованные данные) переживали
+      # пересоздание контейнера. Значение берётся из .env рядом с compose.
+      APP_KEY: ${APP_KEY}
       DB_CONNECTION: sqlite
       DB_DATABASE: /var/www/html/database/database.sqlite
+      # Настройки AI (OpenRouter). Тоже из .env рядом с compose.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-z-ai/glm-4.5-air:free}
     volumes:
