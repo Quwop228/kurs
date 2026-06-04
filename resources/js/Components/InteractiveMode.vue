@@ -23,6 +23,22 @@ const totalSteps = computed(() => steps.value.length)
 const progress = computed(() => totalSteps.value ? Math.round((readSteps.value.size / totalSteps.value) * 100) : 0)
 const currentStepData = computed(() => steps.value[currentStep.value] || null)
 
+const delay = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// Ждём, пока фоновая задача сгенерирует объяснение (макс ~5 минут).
+async function pollExplanation() {
+    const deadline = Date.now() + 5 * 60 * 1000
+    while (Date.now() < deadline) {
+        await delay(2500)
+        const res = await axios.get(`/articles/${props.articleSlug}/interactive/status`)
+        const payload = res.data
+        if (payload.status === 'done') return payload.explanation
+        if (payload.status === 'failed') throw new Error(payload.error || 'Генерация не удалась.')
+        // status === 'processing' — ждём дальше
+    }
+    throw new Error('Генерация заняла слишком много времени. Попробуйте позже.')
+}
+
 async function fetchExplanation(regenerate = false) {
     loading.value = true
     error.value = null
@@ -31,7 +47,11 @@ async function fetchExplanation(regenerate = false) {
             ? `/articles/${props.articleSlug}/interactive/regenerate`
             : `/articles/${props.articleSlug}/interactive`
         const response = await axios.post(url)
-        data.value = response.data.explanation
+
+        // Если объяснение уже готово — отдаётся сразу; иначе ставится в очередь (202) и опрашиваем статус.
+        const explanation = response.data.explanation || await pollExplanation()
+        data.value = explanation
+
         if (regenerate) {
             currentStep.value = 0
             readSteps.value = new Set()
@@ -39,6 +59,7 @@ async function fetchExplanation(regenerate = false) {
         }
     } catch (e) {
         error.value = e.response?.data?.error
+            || e.message
             || 'Не удалось сгенерировать объяснение. Попробуйте позже.'
     } finally {
         loading.value = false
