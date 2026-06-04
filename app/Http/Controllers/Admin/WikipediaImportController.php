@@ -34,7 +34,15 @@ class WikipediaImportController extends Controller
         $needsTranslation = $parsed['lang'] !== 'ru';
 
         if ($needsTranslation) {
-            $translated = $ai->translateToRussian($article['title'], $article['content']);
+            try {
+                $translated = $ai->translateToRussian($article['title'], $article['content']);
+            } catch (\Throwable $e) {
+                return response()->json([
+                    'error' => 'Не удалось перевести статью через AI: ' . $e->getMessage()
+                        . ' Проверьте настройки OpenRouter (ключ и модель).',
+                ], 502);
+            }
+
             $article['title'] = $translated['title'];
             $article['content'] = $translated['content'];
             $article['excerpt'] = mb_substr(strip_tags($translated['content']), 0, 300);
