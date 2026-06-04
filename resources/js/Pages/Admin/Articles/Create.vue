@@ -34,20 +34,37 @@ const wikiLoading = ref(false);
 const wikiError = ref('');
 const wikiStatus = ref('');
 
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Опрашиваем статус фоновой задачи импорта, пока не done/failed (макс ~5 минут).
+const pollImport = async (importId) => {
+    const deadline = Date.now() + 5 * 60 * 1000;
+    while (Date.now() < deadline) {
+        await delay(2500);
+        const res = await axios.get(`/admin/wikipedia-import/${importId}/status`);
+        const payload = res.data;
+        if (payload.status === 'done') return payload.result;
+        if (payload.status === 'failed') throw new Error(payload.error || 'Импорт не удался.');
+        // status === 'processing' — ждём дальше
+    }
+    throw new Error('Импорт занял слишком много времени. Попробуйте позже.');
+};
+
 const importFromWikipedia = async () => {
     if (!wikiUrl.value) return;
     wikiLoading.value = true;
     wikiError.value = '';
-    wikiStatus.value = 'Загрузка статьи из Википедии...';
+    wikiStatus.value = 'Постановка задачи импорта...';
 
     try {
-        const isRu = wikiUrl.value.includes('ru.wikipedia.org');
-        if (!isRu) {
-            wikiStatus.value = 'Загрузка и перевод через AI... Это может занять время.';
-        }
+        const start = await axios.post('/admin/wikipedia-import', { url: wikiUrl.value });
+        const importId = start.data.import_id;
 
-        const response = await axios.post('/admin/wikipedia-import', { url: wikiUrl.value });
-        const data = response.data;
+        wikiStatus.value = start.data.needs_translation
+            ? 'Загрузка и перевод через AI... Это может занять до пары минут.'
+            : 'Загрузка статьи из Википедии...';
+
+        const data = await pollImport(importId);
 
         form.title = data.title;
         form.content = data.content;
@@ -57,7 +74,7 @@ const importFromWikipedia = async () => {
             ? `Импортировано и переведено с ${data.source_lang}.wikipedia.org`
             : 'Импортировано из Википедии';
     } catch (e) {
-        wikiError.value = e.response?.data?.error || 'Ошибка при импорте. Проверьте ссылку.';
+        wikiError.value = e.response?.data?.error || e.message || 'Ошибка при импорте. Проверьте ссылку.';
         wikiStatus.value = '';
     } finally {
         wikiLoading.value = false;
