@@ -66,12 +66,19 @@ RUN apk add --no-cache \
 
 WORKDIR /var/www/html
 
+# Composer-бинарь нужен, чтобы пересобрать автозагрузчик с учётом всего кода app/
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
 # Копируем код приложения
 COPY . .
 
 # Подкладываем vendor из стадии composer и собранные ассеты из стадии node
 COPY --from=vendor /app/vendor ./vendor
 COPY --from=frontend /app/public/build ./public/build
+
+# Пересобираем optimized classmap уже с реальным кодом app/ (Jobs, Services и т.д.),
+# иначе новые классы в проде не находятся ("Class ... not found").
+RUN composer dump-autoload --optimize --no-dev --no-scripts
 
 # Конфиги
 COPY docker/nginx.conf /etc/nginx/nginx.conf
