@@ -9,8 +9,11 @@ if [ ! -f .env ]; then
     cp .env.example .env
 fi
 
-# Генерируем APP_KEY, если он пустой
-if ! grep -q "^APP_KEY=base64:" .env; then
+# APP_KEY: если задан через окружение (compose) — используем его и ничего не генерим.
+# Иначе генерируем разовый ключ в .env (для локального запуска).
+if [ -n "$APP_KEY" ]; then
+    echo "[entrypoint] APP_KEY задан через окружение"
+elif ! grep -q "^APP_KEY=base64:" .env; then
     echo "[entrypoint] Генерирую APP_KEY"
     php artisan key:generate --force
 fi
