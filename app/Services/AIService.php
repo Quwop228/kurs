@@ -8,6 +8,56 @@ use Illuminate\Support\Facades\Log;
 
 class AIService
 {
+    /**
+     * Единая точка обращения к OpenRouter.
+     * Бросает исключение при ошибке API или пустом ответе — чтобы вызывающий код
+     * не сохранял "пустышку" (пустое объяснение / непереведённый текст) как валидный результат.
+     *
+     * @param array<int, array{role: string, content: string}> $messages
+     */
+    private function chat(array $messages, int $timeout = 120): string
+    {
+        $apiKey = config('openrouter.api_key');
+
+        if (empty($apiKey)) {
+            throw new \RuntimeException('OPENROUTER_API_KEY не задан. Укажите ключ в .env / переменных окружения.');
+        }
+
+        $response = Http::timeout($timeout)->withHeaders([
+            'Authorization' => 'Bearer ' . $apiKey,
+            'Content-Type' => 'application/json',
+        ])->post(config('openrouter.base_url') . '/chat/completions', [
+            'model' => config('openrouter.model'),
+            'messages' => $messages,
+        ]);
+
+        if ($response->failed()) {
+            $body = $response->json();
+            $apiMessage = $body['error']['message'] ?? $response->body();
+
+            Log::error('OpenRouter API error', [
+                'status' => $response->status(),
+                'model' => config('openrouter.model'),
+                'error' => $apiMessage,
+            ]);
+
+            throw new \RuntimeException("Ошибка OpenRouter ({$response->status()}): {$apiMessage}");
+        }
+
+        $content = $response->json('choices.0.message.content');
+
+        if (!is_string($content) || trim($content) === '') {
+            Log::error('OpenRouter вернул пустой ответ', [
+                'model' => config('openrouter.model'),
+                'body' => $response->json(),
+            ]);
+
+            throw new \RuntimeException('OpenRouter вернул пустой ответ.');
+        }
+
+        return $content;
+    }
+
     public function generateDailyUpdate(Article $article): array
     {
         try {
@@ -116,43 +166,34 @@ class AIService
             $plainText = strip_tags($article->content);
             $truncated = mb_substr($plainText, 0, 6000);
 
-            $response = Http::timeout(120)->withHeaders([
-                'Authorization' => 'Bearer ' . config('openrouter.api_key'),
-                'Content-Type' => 'application/json',
-            ])->post(config('openrouter.base_url') . '/chat/completions', [
-                'model' => config('openrouter.model'),
-                'messages' => [
-                    [
-                        'role' => 'system',
-                        'content' => 'Ты — дружелюбный преподаватель, который объясняет сложные темы простым языком. '
-                            . 'Твоя задача — взять энциклопедическую статью и превратить её в серию коротких, понятных шагов-объяснений. '
-                            . 'Каждый шаг раскрывает одну ключевую идею. Используй аналогии, примеры из жизни, простые сравнения. '
-                            . 'Пиши так, будто объясняешь другу, который впервые слышит об этой теме. '
-                            . 'Отвечай СТРОГО в формате JSON без markdown-обёртки.',
-                    ],
-                    [
-                        'role' => 'user',
-                        'content' => "Разбери следующую статью на 4-8 простых шагов-объяснений.\n\n"
-                            . "Название: \"{$article->title}\"\n\n"
-                            . "Текст статьи:\n{$truncated}\n\n"
-                            . "Ответ в формате JSON:\n"
-                            . "{\n"
-                            . "  \"summary\": \"Одно предложение: о чём эта статья\",\n"
-                            . "  \"steps\": [\n"
-                            . "    {\n"
-                            . "      \"title\": \"Название шага\",\n"
-                            . "      \"explanation\": \"Простое объяснение на 2-4 предложения, как будто рассказываешь другу\",\n"
-                            . "      \"analogy\": \"Аналогия или пример из повседневной жизни (1 предложение)\",\n"
-                            . "      \"key_points\": [\"ключевой факт 1\", \"ключевой факт 2\"]\n"
-                            . "    }\n"
-                            . "  ]\n"
-                            . "}",
-                    ],
+            $messageContent = $this->chat([
+                [
+                    'role' => 'system',
+                    'content' => 'Ты — дружелюбный преподаватель, который объясняет сложные темы простым языком. '
+                        . 'Твоя задача — взять энциклопедическую статью и превратить её в серию коротких, понятных шагов-объяснений. '
+                        . 'Каждый шаг раскрывает одну ключевую идею. Используй аналогии, примеры из жизни, простые сравнения. '
+                        . 'Пиши так, будто объясняешь другу, который впервые слышит об этой теме. '
+                        . 'Отвечай СТРОГО в формате JSON без markdown-обёртки.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => "Разбери следующую статью на 4-8 простых шагов-объяснений.\n\n"
+                        . "Название: \"{$article->title}\"\n\n"
+                        . "Текст статьи:\n{$truncated}\n\n"
+                        . "Ответ в формате JSON:\n"
+                        . "{\n"
+                        . "  \"summary\": \"Одно предложение: о чём эта статья\",\n"
+                        . "  \"steps\": [\n"
+                        . "    {\n"
+                        . "      \"title\": \"Название шага\",\n"
+                        . "      \"explanation\": \"Простое объяснение на 2-4 предложения, как будто рассказываешь другу\",\n"
+                        . "      \"analogy\": \"Аналогия или пример из повседневной жизни (1 предложение)\",\n"
+                        . "      \"key_points\": [\"ключевой факт 1\", \"ключевой факт 2\"]\n"
+                        . "    }\n"
+                        . "  ]\n"
+                        . "}",
                 ],
             ]);
-
-            $data = $response->json();
-            $messageContent = $data['choices'][0]['message']['content'] ?? '';
 
             $messageContent = preg_replace('/^```(?:json)?\s*/m', '', $messageContent);
             $messageContent = preg_replace('/\s*```$/m', '', $messageContent);
@@ -167,6 +208,7 @@ class AIService
                 ];
             }
 
+            // Модель вернула текст, но не в ожидаемом JSON — отдаём как один шаг.
             return [
                 'summary' => '',
                 'steps' => [
@@ -224,31 +266,47 @@ class AIService
 
         foreach ($chunks as $i => $chunk) {
             $response = $responses["chunk_{$i}"] ?? null;
-            $data = $response ? $response->json() : null;
-            $translated = $data['choices'][0]['message']['content'] ?? $chunk;
+
+            // Если запрос упал (исключение пула) или вернул ошибку API — не подсовываем
+            // молча оригинальный английский текст, а сообщаем о провале перевода.
+            if (!$response instanceof \Illuminate\Http\Client\Response || $response->failed()) {
+                $detail = $response instanceof \Illuminate\Http\Client\Response
+                    ? ($response->json('error.message') ?? "HTTP {$response->status()}")
+                    : 'нет ответа от API';
+
+                Log::error('OpenRouter translation chunk failed', [
+                    'chunk' => $i,
+                    'model' => config('openrouter.model'),
+                    'detail' => $detail,
+                ]);
+
+                throw new \RuntimeException("Не удалось перевести текст через OpenRouter: {$detail}");
+            }
+
+            $translated = $response->json('choices.0.message.content');
+
+            if (!is_string($translated) || trim($translated) === '') {
+                throw new \RuntimeException('OpenRouter вернул пустой перевод фрагмента текста.');
+            }
+
             $translated = preg_replace('/^```(?:html)?\s*/m', '', $translated);
             $translated = preg_replace('/\s*```$/m', '', $translated);
             $translatedChunks[] = trim($translated);
         }
 
-        $titleResponse = Http::timeout(30)->withHeaders([
-            'Authorization' => 'Bearer ' . config('openrouter.api_key'),
-            'Content-Type' => 'application/json',
-        ])->post(config('openrouter.base_url') . '/chat/completions', [
-            'model' => config('openrouter.model'),
-            'messages' => [
+        // Перевод заголовка — через общий метод chat() (с обработкой ошибок).
+        $translatedTitle = trim(
+            $this->chat([
                 [
                     'role' => 'user',
                     'content' => "Переведи на русский одно название (без пояснений, только перевод): \"{$title}\"",
                 ],
-            ],
-        ]);
-
-        $titleData = $titleResponse->json();
-        $translatedTitle = trim($titleData['choices'][0]['message']['content'] ?? $title, " \t\n\r\0\x0B\"«»");
+            ], 30),
+            " \t\n\r\0\x0B\"«»"
+        );
 
         return [
-            'title' => $translatedTitle,
+            'title' => $translatedTitle !== '' ? $translatedTitle : $title,
             'content' => implode("\n", $translatedChunks),
         ];
     }
